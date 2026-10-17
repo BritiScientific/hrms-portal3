@@ -193,6 +193,28 @@ button {
   line-height: 1.45;
 }
 
+.text-button {
+  margin-top: 14px;
+  padding: 8px;
+  color: var(--primary);
+  background: transparent;
+  border: 0;
+  font-weight: 700;
+}
+
+.text-button:hover {
+  text-decoration: underline;
+}
+
+.success-box {
+  margin: 12px 0;
+  padding: 12px 14px;
+  color: #177d50;
+  background: #def8e9;
+  border-radius: 9px;
+  font-size: 13px;
+}
+
 .primary-button,
 .secondary-button {
   display: inline-flex;
@@ -439,6 +461,51 @@ button {
   background: #e1ebff;
   border-radius: 50%;
   font-weight: 800;
+}
+
+.user-avatar-image {
+  object-fit: cover;
+}
+
+.profile-picture-editor {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.profile-picture-preview,
+.profile-picture-placeholder {
+  width: 112px;
+  height: 112px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+}
+
+.profile-picture-preview {
+  object-fit: cover;
+}
+
+.profile-picture-placeholder {
+  display: grid;
+  place-items: center;
+  color: #ffffff;
+  background: var(--primary);
+  font-size: 42px;
+  font-weight: 700;
+}
+
+.profile-picture-editor form {
+  flex: 1;
+}
+
+.profile-picture-editor input[type="file"] {
+  display: block;
+  max-width: 100%;
+  margin: 8px 0;
+}
+
+.profile-picture-editor .primary-button {
+  margin-top: 12px;
 }
 
 .main-content {
@@ -976,6 +1043,11 @@ td {
 
   .main-content {
     padding: 18px;
+  }
+
+  .profile-picture-editor {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .summary-grid,

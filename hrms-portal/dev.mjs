@@ -8,7 +8,8 @@ const useWindowsShell = process.platform === "win32" && !npmCli;
 const npmCommand = npmCli ? process.execPath : process.platform === "win32" ? "npm.cmd" : "npm";
 const services = [
   { name: "Backend", directory: resolve(projectDirectory, "backend"), args: ["run", "dev"] },
-  { name: "Frontend", directory: resolve(projectDirectory, "frontend"), args: ["run", "dev"] }
+  { name: "Frontend", directory: resolve(projectDirectory, "frontend"), args: ["run", "dev"] },
+  { name: "Super Admin frontend", directory: resolve(projectDirectory, "frontend"), args: ["run", "dev:super-admin"] }
 ];
 
 let stopping = false;

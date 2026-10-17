@@ -24,12 +24,18 @@ const pool = require("./config/db");
 
 const app = express();
 
+const configuredCorsOrigins = [process.env.CORS_ORIGIN, process.env.CORS_ORIGINS]
+  .filter(Boolean)
+  .flatMap(origins => origins.split(","))
+  .map(origin => origin.trim())
+  .filter(Boolean);
+const localCorsOrigins = ["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:5174", "http://127.0.0.1:5174"];
 const corsOrigins = process.env.NODE_ENV === "production"
-  ? [process.env.CORS_ORIGIN].filter(Boolean)
-  : [process.env.CORS_ORIGIN || "http://localhost:5173", "http://localhost:5173", "http://127.0.0.1:5173"];
+  ? configuredCorsOrigins
+  : [...new Set([...configuredCorsOrigins, ...localCorsOrigins])];
 
 if (process.env.NODE_ENV === "production" && !corsOrigins.length) {
-  throw new Error("CORS_ORIGIN must be set to the deployed frontend origin in production");
+  throw new Error("CORS_ORIGIN or CORS_ORIGINS must include the deployed frontend origin in production");
 }
 
 app.use(

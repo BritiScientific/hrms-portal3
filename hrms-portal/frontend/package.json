@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node dev-server.mjs",
+    "dev:super-admin": "node dev-server.mjs --super-admin",
     "build": "node build.mjs",
     "preview": "vite preview"
   },

@@ -11,6 +11,8 @@ import {
   useNavigate
 } from "react-router-dom";
 
+const isSuperAdminPortal = import.meta.env.VITE_SUPER_ADMIN_PORTAL === "true" || window.location.port === "5174";
+
 const Login = ({ onLogin }) => {
   const navigate = useNavigate();
 
@@ -25,7 +27,14 @@ const Login = ({ onLogin }) => {
   const [setupAvailable, setSetupAvailable] = useState(false);
   const [fullName, setFullName] = useState("");
   const [bootstrapKey, setBootstrapKey] = useState("");
-  const [portalRole, setPortalRole] = useState("ANY");
+  const [portalRole, setPortalRole] = useState(isSuperAdminPortal ? "SUPER_ADMIN" : "ORG_ADMIN");
+  const [resetMode, setResetMode] = useState(false);
+  const [resetCodeSent, setResetCodeSent] = useState(false);
+  const [resetEmail, setResetEmail] = useState("");
+  const [resetCode, setResetCode] = useState("");
+  const [resetPassword, setResetPassword] = useState("");
+  const [resetConfirmPassword, setResetConfirmPassword] = useState("");
+  const [resetMessage, setResetMessage] = useState("");
 
   useEffect(() => {
     api.get("/auth/setup-status").then(response => setSetupAvailable(response.data.setupAvailable === true)).catch(() => setSetupAvailable(false));
@@ -33,6 +42,46 @@ const Login = ({ onLogin }) => {
 
   const submit = async (event) => {
     event.preventDefault();
+
+    if (resetMode) {
+      const emailError = getEmailValidationError(resetEmail);
+      if (emailError) return setError(emailError);
+      if (resetCodeSent) {
+        const passwordError = getPasswordValidationError(resetPassword);
+        if (passwordError) return setError(passwordError);
+        if (resetPassword !== resetConfirmPassword) return setError("The passwords do not match.");
+      }
+
+      try {
+        setLoading(true);
+        setError("");
+        if (!resetCodeSent) {
+          const response = await api.post("/auth/password-reset/request", { email: resetEmail.trim() });
+          setResetCodeSent(true);
+          setResetMessage(response.data.message);
+        } else {
+          const response = await api.post("/auth/password-reset/confirm", {
+            email: resetEmail.trim(),
+            code: resetCode.trim(),
+            password: resetPassword,
+            confirmPassword: resetConfirmPassword
+          });
+          setResetMode(false);
+          setResetCodeSent(false);
+          setEmail(resetEmail);
+          setPassword("");
+          setResetCode("");
+          setResetPassword("");
+          setResetConfirmPassword("");
+          setResetMessage(response.data.message);
+        }
+      } catch (requestError) {
+        setError(requestError.response?.data?.message || "Unable to reset the password. Try again later.");
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
 
     const emailError = getEmailValidationError(email);
     if (emailError) {
@@ -67,15 +116,24 @@ const Login = ({ onLogin }) => {
         setSetupAvailable(false);
       }
       const response = await api.post("/auth/login", { email: email.trim(), password });
-      if (portalRole !== "ANY" && response.data.user.role !== portalRole) {
-        setError(`This account uses the ${response.data.user.role.replaceAll("_", " ")} portal. Choose that portal and try again.`);
+      const signedInRole = response.data.user.role;
+      if (
+        (isSuperAdminPortal && signedInRole !== "SUPER_ADMIN") ||
+        (!isSuperAdminPortal && signedInRole === "SUPER_ADMIN") ||
+        (signedInRole !== portalRole)
+      ) {
+        setError(isSuperAdminPortal
+          ? `This account uses the ${signedInRole.replaceAll("_", " ")} portal. Sign in through http://localhost:5173 instead.`
+          : signedInRole === "SUPER_ADMIN"
+            ? "Super Admin sign-in is available at http://localhost:5174."
+            : `This account uses the ${signedInRole.replaceAll("_", " ")} portal. Choose that portal and try again.`);
         return;
       }
       onLogin(response.data);
       navigate("/dashboard");
     } catch (requestError) {
       const apiUnavailableMessage = import.meta.env.PROD
-        ? "Cannot reach the HRMS API. Deploy the backend separately, set VITE_API_BASE_URL in Netlify to its HTTPS URL ending in /api/v1, and redeploy the frontend."
+        ? "Cannot reach the HRMS API. Set VITE_API_BASE_URL to the deployed API URL ending in /api/v1 and rebuild the frontend."
         : "Cannot reach the HRMS API. Start the backend with `cd backend` and `npm.cmd start`, then refresh this page.";
       setError(requestError.response?.data?.message || apiUnavailableMessage);
     } finally {
@@ -115,8 +173,8 @@ const Login = ({ onLogin }) => {
         className="login-card"
         onSubmit={submit}
       >
-        <h2>{settingUp ? "Create the first admin" : "Welcome back"}</h2>
-        <p>{settingUp ? "Set up your HRMS administrator account." : "Login to your HRMS portal."}</p>
+        <h2>{resetMode ? "Reset your password" : settingUp ? "Create the first admin" : "Welcome back"}</h2>
+        <p>{resetMode ? "Verify your email with a one-time code, then choose a new password." : settingUp ? "Set up your HRMS administrator account." : "Login to your HRMS portal."}</p>
 
         {error && (
           <div className="error-box">
@@ -124,62 +182,80 @@ const Login = ({ onLogin }) => {
           </div>
         )}
 
-        <label>
-          Choose your portal
-          <select value={settingUp ? "SUPER_ADMIN" : portalRole} disabled={settingUp} onChange={event => setPortalRole(event.target.value)}>
-            <option value="ANY">Automatic (use my account role)</option>
-            <option value="SUPER_ADMIN">Super Admin</option>
-            <option value="ORG_ADMIN">Organization Admin</option>
-            <option value="HR">HR</option>
-            <option value="MANAGER">Department Manager</option>
-            <option value="EMPLOYEE">Employee</option>
-            <option value="RECRUITER">Recruiter</option>
-          </select>
-        </label>
+        {resetMessage && <div className="success-box">{resetMessage}</div>}
 
-        {settingUp && <label>Full name<input value={fullName} onChange={event => setFullName(event.target.value)} required /></label>}
-        {settingUp && <label>One-time setup key<input type="password" autoComplete="off" value={bootstrapKey} onChange={event => setBootstrapKey(event.target.value)} required /><small className="field-hint">A deployment administrator must set SUPER_ADMIN_BOOTSTRAP_KEY on the backend. Use at least 32 random characters.</small></label>}
+        {resetMode ? (
+          <>
+            <label>Email<input type="email" autoComplete="email" value={resetEmail} onChange={event => setResetEmail(event.target.value)} required /></label>
+            {resetCodeSent && <>
+              <label>One-time code<input inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={resetCode} onChange={event => setResetCode(event.target.value.replace(/\D/g, "").slice(0, 6))} required /></label>
+              <label>New password<input type="password" autoComplete="new-password" value={resetPassword} onChange={event => setResetPassword(event.target.value)} required /><small className="field-hint">Use 8+ characters with uppercase, lowercase, a number, and a special character.</small></label>
+              <label>Confirm new password<input type="password" autoComplete="new-password" value={resetConfirmPassword} onChange={event => setResetConfirmPassword(event.target.value)} required /></label>
+            </>}
+            <button className="primary-button full-width" type="submit">{loading ? "Please wait..." : resetCodeSent ? "Set new password" : "Send reset code"}</button>
+            <button className="secondary-button full-width" type="button" onClick={() => { setResetMode(false); setResetCodeSent(false); setResetMessage(""); setError(""); }}>Back to sign in</button>
+          </>
+        ) : (
+          <>
+            <label>
+              Choose your portal
+              {isSuperAdminPortal ? <select value="SUPER_ADMIN" disabled><option value="SUPER_ADMIN">Super Admin</option></select> : (
+                <select value={portalRole} onChange={event => setPortalRole(event.target.value)}>
+                  <option value="ORG_ADMIN">Organization Admin</option>
+                  <option value="HR">HR</option>
+                  <option value="MANAGER">Department Manager</option>
+                  <option value="EMPLOYEE">Employee</option>
+                  <option value="RECRUITER">Recruiter</option>
+                </select>
+              )}
+            </label>
 
-        <label>
-          Email
-          <input
-            type="email"
-            autoComplete="email"
-            value={email}
-            onChange={(event) =>
-              setEmail(event.target.value)
-            }
-            required
-          />
-        </label>
+            {settingUp && <label>Full name<input value={fullName} onChange={event => setFullName(event.target.value)} required /></label>}
+            {settingUp && <label>One-time setup key<input type="password" autoComplete="off" value={bootstrapKey} onChange={event => setBootstrapKey(event.target.value)} required /><small className="field-hint">A deployment administrator must set SUPER_ADMIN_BOOTSTRAP_KEY on the backend. Use at least 32 random characters.</small></label>}
 
-        <label>
-          Password
-          <input
-            type="password"
-            autoComplete={settingUp ? "new-password" : "current-password"}
-            minLength={settingUp ? 8 : undefined}
-            title={settingUp ? "Use 8+ characters with uppercase, lowercase, a number, and a special character." : undefined}
-            value={password}
-            onChange={(event) =>
-              setPassword(event.target.value)
-            }
-            required
-          />
-          {settingUp && <small className="field-hint">Use 8+ characters with uppercase, lowercase, a number, and a special character.</small>}
-        </label>
+            <label>
+              Email
+              <input
+                type="email"
+                autoComplete="email"
+                value={email}
+                onChange={(event) =>
+                  setEmail(event.target.value)
+                }
+                required
+              />
+            </label>
 
-        <button
-          className="primary-button full-width"
-          type="submit"
-        >
-          {loading ? "Please wait..." : settingUp ? "Create administrator" : "Login"}
-        </button>
-        {settingUp ? <button className="secondary-button full-width" type="button" onClick={() => { setSettingUp(false); setPortalRole("ANY"); setError(""); }}>
-          I already have an account
-        </button> : setupAvailable && <button className="secondary-button full-width" type="button" onClick={() => { setSettingUp(true); setPortalRole("SUPER_ADMIN"); setError(""); }}>
-          Initial Super Admin setup
-        </button>}
+            <label>
+              Password
+              <input
+                type="password"
+                autoComplete={settingUp ? "new-password" : "current-password"}
+                minLength={settingUp ? 8 : undefined}
+                title={settingUp ? "Use 8+ characters with uppercase, lowercase, a number, and a special character." : undefined}
+                value={password}
+                onChange={(event) =>
+                  setPassword(event.target.value)
+                }
+                required
+              />
+              {settingUp && <small className="field-hint">Use 8+ characters with uppercase, lowercase, a number, and a special character.</small>}
+            </label>
+
+            <button
+              className="primary-button full-width"
+              type="submit"
+            >
+              {loading ? "Please wait..." : settingUp ? "Create administrator" : "Login"}
+            </button>
+            {!settingUp && <button className="text-button full-width" type="button" onClick={() => { setResetMode(true); setResetEmail(email); setResetMessage(""); setError(""); }}>Forgot password?</button>}
+            {settingUp ?             <button className="secondary-button full-width" type="button" onClick={() => { setSettingUp(false); setPortalRole(isSuperAdminPortal ? "SUPER_ADMIN" : "ORG_ADMIN"); setError(""); }}>
+              I already have an account
+            </button> : isSuperAdminPortal && setupAvailable && <button className="secondary-button full-width" type="button" onClick={() => { setSettingUp(true); setPortalRole("SUPER_ADMIN"); setError(""); }}>
+              Initial Super Admin setup
+            </button>}
+          </>
+        )}
       </form>
     </main>
   );
@@ -1533,11 +1609,53 @@ const LeaveApprovals = () => {
   return <div><PageTitle breadcrumb="People / Approvals" title="Leave approvals" description="Review requests for your department or organization." />{error && <div className="error-box">{error}</div>}<div className="white-panel table-panel">{leaves.length ? <table><thead><tr><th>Employee</th><th>Department</th><th>Type</th><th>Dates</th><th>Reason</th><th>Status</th><th>Action</th></tr></thead><tbody>{leaves.map(l => <tr key={l.id}><td>{l.employee_name}</td><td>{l.department_name || "-"}</td><td>{l.leave_type}</td><td>{l.start_date?.slice(0, 10)} to {l.end_date?.slice(0, 10)}</td><td>{l.reason}</td><td>{l.status}</td><td>{l.status === "PENDING" ? <><button className="small-button" onClick={() => review(l.id, "APPROVED")}>Approve</button> <button className="small-button danger" onClick={() => review(l.id, "REJECTED")}>Reject</button></> : l.review_note || "Reviewed"}</td></tr>)}</tbody></table> : <div className="empty-state">No leave requests are waiting for review.</div>}</div></div>;
 };
 
-const MyProfile = () => {
+const MyProfile = ({ user, onUserUpdate }) => {
   const [profile, setProfile] = useState(null);
   const [error, setError] = useState("");
-  useEffect(() => { api.get("/employees/me").then(r => setProfile(r.data)).catch(e => setError(e.response?.data?.message || "Unable to load profile")); }, []);
-  return <div><PageTitle breadcrumb="My workspace / Profile" title="My profile" description="Your employment and contact information." />{error && <div className="error-box">{error}</div>}{profile && <div className="white-panel profile-panel"><h3>{profile.full_name}</h3><p><strong>Employee code:</strong> {profile.employee_code}</p><p><strong>Department:</strong> {profile.department_name || "-"}</p><p><strong>Designation:</strong> {profile.designation_name || "-"}</p><p><strong>Email:</strong> {profile.official_email || "-"}</p><p><strong>Phone:</strong> {profile.phone || "-"}</p><p><strong>Joining date:</strong> {profile.joining_date?.slice(0, 10) || "-"}</p><p><strong>Employment status:</strong> {profile.employment_status}</p></div>}</div>;
+  const [profilePicture, setProfilePicture] = useState(user.profilePicture || "");
+  const [pictureFile, setPictureFile] = useState(null);
+  const [savingPicture, setSavingPicture] = useState(false);
+  const [success, setSuccess] = useState("");
+  useEffect(() => {
+    if (user.role !== "EMPLOYEE") return;
+    api.get("/employees/me").then(r => setProfile(r.data)).catch(e => setError(e.response?.data?.message || "Unable to load profile"));
+  }, [user.role]);
+  const uploadPicture = async event => {
+    event.preventDefault();
+    if (!pictureFile) return setError("Choose a profile picture to upload.");
+    if (pictureFile.size > 2 * 1024 * 1024) return setError("Profile pictures must be 2 MB or smaller.");
+    const formData = new FormData();
+    formData.append("profilePicture", pictureFile);
+    setSavingPicture(true);
+    setError("");
+    setSuccess("");
+    try {
+      const response = await api.post("/users/me/profile-picture", formData);
+      setProfilePicture(response.data.profilePicture);
+      setPictureFile(null);
+      onUserUpdate({ ...user, profilePicture: response.data.profilePicture });
+      setSuccess("Your profile picture has been updated.");
+    } catch (requestError) {
+      setError(requestError.response?.data?.message || "Unable to update your profile picture.");
+    } finally {
+      setSavingPicture(false);
+    }
+  };
+  return <div><PageTitle breadcrumb="My workspace / Profile" title="My profile" description="Manage your profile picture and account information." />
+    {error && <div className="error-box">{error}</div>}{success && <div className="success-box">{success}</div>}
+    <section className="white-panel profile-panel">
+      <h3>Profile picture</h3>
+      <div className="profile-picture-editor">
+        {profilePicture ? <img className="profile-picture-preview" src={profilePicture} alt={`${user.fullName} profile`} /> : <div className="profile-picture-placeholder">{user.fullName.charAt(0)}</div>}
+        <form onSubmit={uploadPicture}>
+          <label>Choose a picture<input key={profilePicture} type="file" accept="image/png,image/jpeg,image/webp" onChange={event => setPictureFile(event.target.files?.[0] || null)} /></label>
+          <small className="field-hint">PNG, JPEG, or WebP; maximum 2 MB. You can change it any time.</small>
+          <button className="primary-button" disabled={savingPicture || !pictureFile}>{savingPicture ? "Uploading..." : "Save profile picture"}</button>
+        </form>
+      </div>
+    </section>
+    {user.role === "EMPLOYEE" && (profile ? <div className="white-panel profile-panel"><h3>{profile.full_name}</h3><p><strong>Employee code:</strong> {profile.employee_code}</p><p><strong>Department:</strong> {profile.department_name || "-"}</p><p><strong>Designation:</strong> {profile.designation_name || "-"}</p><p><strong>Email:</strong> {profile.official_email || "-"}</p><p><strong>Phone:</strong> {profile.phone || "-"}</p><p><strong>Joining date:</strong> {profile.joining_date?.slice(0, 10) || "-"}</p><p><strong>Employment status:</strong> {profile.employment_status}</p></div> : !error && <div className="empty-state">Loading your employment information...</div>)}
+  </div>;
 };
 
 const MyAttendance = () => {
@@ -1689,7 +1807,7 @@ const OrganizationBrandingPage = ({ branding, onBrandingChange }) => {
   </div>;
 };
 
-const Portal = ({ user, onLogout }) => {
+const Portal = ({ user, onLogout, onUserUpdate }) => {
   const [branding, setBranding] = useState(null);
   useEffect(() => {
     if (user.role === "SUPER_ADMIN") return undefined;
@@ -1731,7 +1849,7 @@ const Portal = ({ user, onLogout }) => {
     SUPER_ADMIN: [["/dashboard", "Platform dashboard"], ["/organizations", "Organizations"], ["/subscriptions", "Plans & subscriptions"]],
     ORG_ADMIN: [["/dashboard", "Dashboard"], ["/subscription", "Subscription & usage"], ["/branding", "Organization branding"], ["/users", "Users & roles"], ["/departments", "Departments"], ["/designations", "Designations"], ["/employees", "Employees"], ["/onboarding", "Onboarding"], ["/assets", "Assets"], ["/attendance", "Attendance"], ["/recruitment", "Recruitment / ATS"], ["/interviews", "Interviews"], ["/leave-approvals", "Leave approvals"], ["/exits", "Exit management"], ["/payroll", "Payroll"], ["/reports", "Reports"], ["/support", "HR Help"]],
     HR: [["/dashboard", "Dashboard"], ["/users", "Users & roles"], ["/departments", "Departments"], ["/designations", "Designations"], ["/employees", "Employees"], ["/onboarding", "Onboarding"], ["/assets", "Assets"], ["/attendance", "Attendance"], ["/recruitment", "Recruitment / ATS"], ["/interviews", "Interviews"], ["/leave-approvals", "Leave approvals"], ["/exits", "Exit management"], ["/payroll", "Payroll"], ["/reports", "Reports"], ["/support", "HR Help"]],
-    MANAGER: [["/dashboard", "Team dashboard"], ["/employees", "My team"], ["/departments", "My department"], ["/onboarding", "Team onboarding"], ["/assets", "Team assets"], ["/attendance", "Team attendance"], ["/recruitment", "Hiring requests"], ["/interviews", "Interviews"], ["/leave-approvals", "Leave approvals"], ["/exits", "Exit approvals"], ["/support", "HR Help"]],
+    MANAGER: [["/dashboard", "Team dashboard"], ["/profile", "My profile"], ["/employees", "My team"], ["/departments", "My department"], ["/onboarding", "Team onboarding"], ["/assets", "Team assets"], ["/attendance", "Team attendance"], ["/recruitment", "Hiring requests"], ["/interviews", "Interviews"], ["/leave-approvals", "Leave approvals"], ["/exits", "Exit approvals"], ["/support", "HR Help"]],
     EMPLOYEE: [["/dashboard", "My dashboard"], ["/profile", "My profile"], ["/my-attendance", "My attendance"], ["/my-leaves", "My leave"], ["/onboarding", "My onboarding"], ["/assets", "My assets"], ["/my-exit", "My exit request"], ["/payroll", "My payslips"], ["/support", "HR Help"]],
     RECRUITER: [["/dashboard", "Dashboard"], ["/recruitment", "Recruitment / ATS"], ["/interviews", "Interviews"]]
   };
@@ -1747,7 +1865,7 @@ const Portal = ({ user, onLogout }) => {
         <button className="logout-button" onClick={onLogout}>Logout</button>
       </aside>
       <main className="portal-main">
-        <header className="top-header"><div className="top-header-identity"><strong>{user.fullName}</strong><small>{roleLabels[user.role] || user.role}</small></div><NotificationBell /><div className="user-avatar" aria-label={`${user.fullName} profile`}>{user.fullName.charAt(0)}</div></header>
+        <header className="top-header"><div className="top-header-identity"><strong>{user.fullName}</strong><small>{roleLabels[user.role] || user.role}</small></div><NotificationBell />{user.profilePicture ? <img className="user-avatar user-avatar-image" src={user.profilePicture} alt={`${user.fullName} profile`} /> : <div className="user-avatar" aria-label={`${user.fullName} profile`}>{user.fullName.charAt(0)}</div>}</header>
         <section className="main-content">
           <Routes>
             <Route path="/dashboard" element={<Dashboard user={user} />} />
@@ -1761,7 +1879,7 @@ const Portal = ({ user, onLogout }) => {
             <Route path="/leave-approvals" element={["MANAGER", "HR", "ORG_ADMIN"].includes(user.role) ? <LeaveApprovals /> : <Navigate to="/dashboard" replace />} />
             <Route path="/my-leaves" element={user.role === "EMPLOYEE" ? <MyLeavePage /> : <Navigate to="/dashboard" replace />} />
             <Route path="/my-attendance" element={user.role === "EMPLOYEE" ? <MyAttendance /> : <Navigate to="/dashboard" replace />} />
-            <Route path="/profile" element={user.role === "EMPLOYEE" ? <MyProfile /> : <Navigate to="/dashboard" replace />} />
+            <Route path="/profile" element={["EMPLOYEE", "MANAGER"].includes(user.role) ? <MyProfile user={user} onUserUpdate={onUserUpdate} /> : <Navigate to="/dashboard" replace />} />
             <Route path="/designations" element={["ORG_ADMIN", "HR"].includes(user.role) ? <DesignationsPage /> : <Navigate to="/dashboard" replace />} />
             <Route path="/onboarding" element={["ORG_ADMIN", "HR", "MANAGER", "EMPLOYEE"].includes(user.role) ? <OnboardingPage role={user.role} /> : <Navigate to="/dashboard" replace />} />
             <Route path="/assets" element={["ORG_ADMIN", "HR", "MANAGER", "EMPLOYEE"].includes(user.role) ? <AssetsPage role={user.role} /> : <Navigate to="/dashboard" replace />} />
@@ -1820,7 +1938,16 @@ const App = () => {
     setUser
   ] = useState(() => {
     try {
-      return JSON.parse(localStorage.getItem("hrms_user"));
+      const storedUser = JSON.parse(localStorage.getItem("hrms_user"));
+      const matchesPortal = isSuperAdminPortal
+        ? storedUser?.role === "SUPER_ADMIN"
+        : storedUser?.role !== "SUPER_ADMIN";
+      if (!matchesPortal) {
+        localStorage.removeItem("hrms_token");
+        localStorage.removeItem("hrms_user");
+        return null;
+      }
+      return storedUser;
     } catch {
       return null;
     }
@@ -1830,6 +1957,11 @@ const App = () => {
     localStorage.setItem("hrms_token", token);
     localStorage.setItem("hrms_user", JSON.stringify(signedInUser));
     setUser(signedInUser);
+  };
+
+  const updateUser = updatedUser => {
+    localStorage.setItem("hrms_user", JSON.stringify(updatedUser));
+    setUser(updatedUser);
   };
 
   const logout = () => {
@@ -1842,6 +1974,7 @@ const App = () => {
     <Portal
       user={user}
       onLogout={logout}
+      onUserUpdate={updateUser}
     />
   ) : (
     <Routes>

@@ -8,9 +8,12 @@ From the repository root, start both the API and frontend with one command:
 npm.cmd run dev
 ```
 
-The frontend opens at `http://localhost:5173` and the API listens on
-`http://localhost:5001`. Press Ctrl+C to stop both. PostgreSQL must be running,
-and `backend/.env` must be configured before login and data features can work.
+The organization and staff frontend opens at `http://localhost:5173`, the
+separate Super Admin frontend opens at `http://localhost:5174`, and the API
+listens on `http://localhost:5001`. The two frontends use separate browser
+origins and login sessions, while sharing the API and database. Press Ctrl+C
+to stop all three. PostgreSQL must be running, and `backend/.env` must be
+configured before login and data features can work.
 
 ## PostgreSQL setup
 
@@ -20,7 +23,7 @@ Configure `backend/.env` with the PostgreSQL host, database, username, and passw
 psql -h localhost -U hrms_user -d hrms_portal -f backend/database/schema.sql
 ```
 
-The SQL uses additive table/column creation and can be run again to add newer schema changes.
+The SQL uses additive table/column creation and can be run again to add newer schema changes. For an existing database, apply new migrations after the previously listed migrations.
 
 ## Subscription setup
 
@@ -34,6 +37,19 @@ HR and Organization Admins can import employee records from the **Employees** pa
 
 The portal records the plan price and dates but does not collect payment. Connect a payment provider before using it to charge customers.
 
+## Password recovery and profile pictures
+
+Configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`,
+`SMTP_PASSWORD`, and `SMTP_FROM` in `backend/.env` to enable password-reset
+email. Any mail provider with SMTP access can be used. Users can request a
+one-time code from **Forgot password?** on the sign-in page; codes expire after
+10 minutes and allow up to five attempts. The same response is shown whether
+or not an account exists for the entered email.
+
+Employee and Department Manager accounts can upload or replace their own
+profile picture from **My profile**. PNG, JPEG, and WebP images up to 2 MB are
+accepted. A profile picture is optional.
+
 ## First login and role setup
 
 1. Before first launch, set `SUPER_ADMIN_BOOTSTRAP_KEY` in the backend environment to a random secret with at least 32 characters. Generate one locally with `node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"`; put it in the hosting provider's secret settings or `backend/.env`, never in frontend variables or source control.
@@ -43,15 +59,29 @@ The portal records the plan price and dates but does not collect payment. Connec
 5. Sign in as Organization Admin. Create departments and employee records, then open **Users & role access** to create HR, Department Manager, Employee, or Recruiter accounts.
 6. Assign each manager to a department. Link each employee login to its employee record. All accounts use the same login page; the account role selects its portal and permissions.
 
-For an existing database, apply the migrations in order: `backend/database/migrations/002_organization_admin_invitations.sql` and `backend/database/migrations/003_organization_background_color.sql`. For a new database, `backend/database/schema.sql` includes both changes. Do not drop or recreate the database to apply migrations.
+For an existing database, apply the migrations in order:
+`backend/database/migrations/002_organization_admin_invitations.sql`,
+`backend/database/migrations/003_organization_background_color.sql`, and
+`backend/database/migrations/004_password_reset_and_profile_pictures.sql`.
+For a new database, `backend/database/schema.sql` includes these changes. Do
+not drop or recreate the database to apply migrations.
 
 ## Deployment environment
 
-Use `backend/.env.example` as a variable-name reference; do not commit `.env` or real secrets. Set the database variables, a long random `JWT_SECRET`, `NODE_ENV=production`, `FRONTEND_URL` (the deployed frontend origin, using HTTPS), and `CORS_ORIGIN` (the exact frontend origin) in the backend host's secret settings. Set `VITE_API_BASE_URL` on the frontend build to the deployed API base, such as `https://api.example.com/api/v1`. Never put database credentials, JWT secrets, or the bootstrap key in `VITE_*` variables because those are shipped to browsers.
+Use `backend/.env.example` as a variable-name reference; do not commit `.env` or real secrets. Set the database variables, a long random `JWT_SECRET`, `NODE_ENV=production`, `FRONTEND_URL` (the deployed staff-portal origin, using HTTPS), and `CORS_ORIGINS` (both deployed frontend origins, comma-separated) in the backend host's secret settings. Configure the `SMTP_*` settings there as well to enable password-reset codes. Set `VITE_API_BASE_URL` on both frontend builds to the deployed API base, such as `https://api.example.com/api/v1`. Set `VITE_SUPER_ADMIN_PORTAL=true` only on the Super Admin frontend's build. Never put database credentials, JWT secrets, SMTP credentials, or the bootstrap key in `VITE_*` variables because those are shipped to browsers.
 
 This repository has a Vite frontend and a separate Express API, and both need to be deployed along with a reachable PostgreSQL database. A static frontend host alone does not run the API. GoDaddy/Hostinger plans vary, so verify that the specific plan supports the required Node.js app and outbound PostgreSQL connections.
 
-Netlify is configured by the repository-root `netlify.toml` to build `hrms-portal/frontend`, publish its `dist` directory, and use the frontend's SPA rewrite for routes such as `/accept-invite`. Deploy the Express backend separately to a Node.js host and PostgreSQL to a reachable database. In Netlify's frontend environment-variable settings, set `VITE_API_BASE_URL` to the deployed backend URL ending in `/api/v1` (for example, `https://your-api-host.example.com/api/v1`), then trigger a new frontend deploy. On the backend host set `CORS_ORIGIN` and `FRONTEND_URL` to your exact HTTPS Netlify site origin and configure the PostgreSQL credentials and `JWT_SECRET`. `VITE_API_BASE_URL` is embedded into the frontend at build time; changing it requires a new frontend deploy. Do not put backend secrets in Netlify frontend variables.
+Deploy the frontend to any static host that supports single-page application
+fallbacks, the Express backend to a Node.js host, and PostgreSQL to a reachable
+database. Set the frontend build variable `VITE_API_BASE_URL` to the deployed
+backend URL ending in `/api/v1` (for example,
+`https://your-api-host.example.com/api/v1`). Set `CORS_ORIGINS` on the backend
+to both exact HTTPS frontend origins separated by a comma, and set
+`FRONTEND_URL` to the staff portal's HTTPS origin. Configure
+the PostgreSQL credentials and `JWT_SECRET`. `VITE_API_BASE_URL` is embedded
+into the frontend at build time; changing it requires a new frontend build.
+Do not put backend secrets in frontend variables.
 
 The API health check is `https://your-api-host.example.com/api/v1/health`. It should return HTTP 200 with `"status":"ok"` and `"database":"connected"` before the frontend login and data features can work. Vercel supports Express deployments, but this Express server is not configured as a Vercel function; it also needs an appropriate serverless adapter and routing setup.
 
@@ -64,4 +94,4 @@ The API health check is `https://your-api-host.example.com/api/v1/health`. It sh
 - **Employee:** linked profile, recent attendance, onboarding tasks, assigned assets, leave/exit requests, payslips, and notifications.
 - **Recruiter:** job, candidate, and interview management.
 
-All listed web modules use PostgreSQL. Biometric punches update daily attendance when the device user ID matches an employee's biometric ID. Automated syncing with physical biometric devices, document uploads, email delivery, and the separate mobile application still require integration work.
+All listed web modules use PostgreSQL. Biometric punches update daily attendance when the device user ID matches an employee's biometric ID. Automated syncing with physical biometric devices, organization invitation emails, general notification emails, and the separate mobile application still require integration work.

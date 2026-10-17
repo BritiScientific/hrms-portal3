@@ -1,4 +1,5 @@
 const bcrypt = require("bcryptjs");
+const { isValidProfilePicture } = require("../utils/profile-picture");
 const pool = require("../config/db");
 const { getEmailValidationError, getPasswordValidationError } = require("../utils/validation");
 const { checkSubscriptionCapacity } = require("../services/subscription.service");
@@ -20,6 +21,27 @@ const getUsers = async (req, res) => {
   } catch (error) {
     console.error("Get organization users error:", error);
     return res.status(500).json({ message: "Unable to fetch users" });
+  }
+};
+
+const updateMyProfilePicture = async (req, res) => {
+  try {
+    if (!["EMPLOYEE", "MANAGER"].includes(req.user.role)) {
+      return res.status(403).json({ message: "Only Employee and Manager accounts can update a profile picture." });
+    }
+    if (!req.file || !isValidProfilePicture(req.file)) {
+      return res.status(400).json({ message: "Choose a valid PNG, JPEG, or WebP image." });
+    }
+
+    const profilePicture = `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`;
+    await pool.query(
+      "UPDATE users SET profile_picture = $1 WHERE id = $2 AND organization_id = $3",
+      [profilePicture, req.user.id, req.user.organizationId]
+    );
+    return res.json({ message: "Profile picture updated.", profilePicture });
+  } catch (error) {
+    console.error("Update profile picture error:", error);
+    return res.status(500).json({ message: "Unable to update your profile picture." });
   }
 };
 
@@ -97,4 +119,4 @@ const createUser = async (req, res) => {
   }
 };
 
-module.exports = { getUsers, createUser };
+module.exports = { getUsers, createUser, updateMyProfilePicture };

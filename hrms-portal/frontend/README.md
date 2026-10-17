@@ -12,9 +12,10 @@ From the repository root, start the frontend and backend together:
 npm.cmd run dev
 ```
 
-The frontend uses `/api/v1` by default, and its development-server proxy
-connects to the backend started by the same command. Configure the database and
-backend environment in `backend/.env` first.
+The organization and staff frontend uses `http://localhost:5173`; the separate
+Super Admin frontend uses `http://localhost:5174`. Both development-server
+proxies connect to the backend started by the same command. Configure the
+database and backend environment in `backend/.env` first.
 
 ## Production build
 
@@ -31,13 +32,10 @@ Build the static frontend files with:
 npm.cmd run build
 ```
 
-Deploy the generated `dist` directory to a static host. For Netlify, use
-`frontend` as the base directory, `npm run build` as the build command, and
-`dist` as the publish directory. The `public/_redirects` file makes Netlify
-serve `index.html` for application routes, including `/accept-invite`, so
-invitation links open the React application. Other hosts need an equivalent
-SPA fallback. The frontend is not a substitute for the Express API; deploy the
-backend and PostgreSQL database separately.
+Deploy the generated `dist` directory to a static host configured to serve
+`index.html` for application routes, including `/accept-invite`, so invitation
+links open the React application. The frontend is not a substitute for the
+Express API; deploy the backend and PostgreSQL database separately.
 
 Only public frontend configuration belongs in `VITE_*` variables. Never put
 database credentials, JWT secrets, or the Super Admin bootstrap key in the

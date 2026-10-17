@@ -4,6 +4,130 @@ const pool = require("../config/db");
 const { createToken } = require("../utils/jwt");
 const { getEmailValidationError, getPasswordValidationError } = require("../utils/validation");
 const { getActiveSubscription, checkSubscriptionCapacity } = require("../services/subscription.service");
+const { isEmailConfigured, sendPasswordResetCode } = require("../services/email.service");
+
+const hashPasswordResetCode = (userId, code) => crypto
+  .createHmac("sha256", process.env.JWT_SECRET)
+  .update(`${userId}:${code}`)
+  .digest("hex");
+
+const requestPasswordReset = async (req, res) => {
+  try {
+    const email = String((req.body || {}).email || "").trim().toLowerCase();
+    const emailError = getEmailValidationError(email);
+    if (emailError) return res.status(400).json({ message: emailError });
+    if (!isEmailConfigured() || !process.env.JWT_SECRET) {
+      return res.status(503).json({ message: "Password reset email is not configured. Contact your administrator." });
+    }
+
+    const userResult = await pool.query(
+      "SELECT id, email FROM users WHERE LOWER(email) = $1 AND status = 'ACTIVE' LIMIT 1",
+      [email]
+    );
+    if (!userResult.rows.length) {
+      return res.json({ message: "If an active account uses this email, a reset code will be sent." });
+    }
+
+    const user = userResult.rows[0];
+    const code = crypto.randomInt(0, 1000000).toString().padStart(6, "0");
+    const codeHash = hashPasswordResetCode(user.id, code);
+    const resetResult = await pool.query(
+      `INSERT INTO password_reset_otps (user_id, code_hash, expires_at, attempts, created_at)
+       VALUES ($1, $2, CURRENT_TIMESTAMP + INTERVAL '10 minutes', 0, CURRENT_TIMESTAMP)
+       ON CONFLICT (user_id) DO UPDATE
+       SET code_hash = EXCLUDED.code_hash,
+           expires_at = EXCLUDED.expires_at,
+           attempts = 0,
+           created_at = EXCLUDED.created_at
+       WHERE password_reset_otps.created_at <= CURRENT_TIMESTAMP - INTERVAL '1 minute'
+       RETURNING user_id`,
+      [user.id, codeHash]
+    );
+    if (!resetResult.rows.length) {
+      return res.json({ message: "If an active account uses this email, a reset code will be sent." });
+    }
+
+    try {
+      await sendPasswordResetCode(user.email, code);
+    } catch (error) {
+      await pool.query(
+        "DELETE FROM password_reset_otps WHERE user_id = $1 AND code_hash = $2",
+        [user.id, codeHash]
+      );
+      throw error;
+    }
+
+    return res.json({ message: "If an active account uses this email, a reset code will be sent." });
+  } catch (error) {
+    console.error("Request password reset error:", error);
+    return res.status(500).json({ message: "Unable to send a password reset code. Try again later." });
+  }
+};
+
+const confirmPasswordReset = async (req, res) => {
+  let client;
+  let transactionStarted = false;
+  try {
+    const { email, code, password, confirmPassword } = req.body || {};
+    const emailError = getEmailValidationError(email);
+    const passwordError = getPasswordValidationError(password);
+    if (emailError || passwordError) return res.status(400).json({ message: emailError || passwordError });
+    if (typeof password !== "string" || typeof confirmPassword !== "string") {
+      return res.status(400).json({ message: "Enter a valid new password and confirmation." });
+    }
+    if (password !== confirmPassword) return res.status(400).json({ message: "The passwords do not match." });
+    if (!process.env.JWT_SECRET) {
+      return res.status(503).json({ message: "Password reset is not configured. Contact your administrator." });
+    }
+    if (!/^\d{6}$/.test(String(code || ""))) {
+      return res.status(400).json({ message: "The reset code is invalid or expired." });
+    }
+
+    const emailAddress = String(email).trim().toLowerCase();
+    const passwordHash = await bcrypt.hash(password, 12);
+    client = await pool.connect();
+    await client.query("BEGIN");
+    transactionStarted = true;
+    const result = await client.query(
+      `SELECT u.id, o.code_hash, o.expires_at, o.attempts
+       FROM users u
+       JOIN password_reset_otps o ON o.user_id = u.id
+       WHERE LOWER(u.email) = $1 AND u.status = 'ACTIVE'
+       FOR UPDATE OF o`,
+      [emailAddress]
+    );
+    const reset = result.rows[0];
+    if (!reset || Number(reset.attempts) >= 5 || new Date(reset.expires_at) <= new Date()) {
+      await client.query("ROLLBACK");
+      transactionStarted = false;
+      return res.status(400).json({ message: "The reset code is invalid or expired." });
+    }
+
+    const expectedHash = Buffer.from(hashPasswordResetCode(reset.id, String(code)), "hex");
+    const storedHash = Buffer.from(reset.code_hash, "hex");
+    if (expectedHash.length !== storedHash.length || !crypto.timingSafeEqual(expectedHash, storedHash)) {
+      await client.query(
+        "UPDATE password_reset_otps SET attempts = attempts + 1 WHERE user_id = $1",
+        [reset.id]
+      );
+      await client.query("COMMIT");
+      transactionStarted = false;
+      return res.status(400).json({ message: "The reset code is invalid or expired." });
+    }
+
+    await client.query("UPDATE users SET password = $1 WHERE id = $2", [passwordHash, reset.id]);
+    await client.query("DELETE FROM password_reset_otps WHERE user_id = $1", [reset.id]);
+    await client.query("COMMIT");
+    transactionStarted = false;
+    return res.json({ message: "Your password has been reset. You can now sign in." });
+  } catch (error) {
+    if (transactionStarted) await client.query("ROLLBACK").catch(() => {});
+    console.error("Confirm password reset error:", error);
+    return res.status(500).json({ message: "Unable to reset the password. Try again later." });
+  } finally {
+    if (client) client.release();
+  }
+};
 
 const getSetupStatus = async (_req, res) => {
   try {
@@ -266,6 +390,7 @@ const login = async (req, res) => {
         fullName: user.full_name,
         email: user.email,
         role: user.role,
+        profilePicture: user.profile_picture,
         organizationId: user.organization_id,
         employeeId: user.employee_id,
         departmentId: user.department_id,
@@ -289,6 +414,8 @@ module.exports = {
   getSetupStatus,
   setupFirstUser,
   login,
+  requestPasswordReset,
+  confirmPasswordReset,
   previewOrganizationAdminInvitation,
   acceptOrganizationAdminInvitation
 };

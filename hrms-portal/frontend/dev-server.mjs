@@ -1,13 +1,15 @@
 import react from "@vitejs/plugin-react";
 import { createServer } from "vite";
 
+const superAdminPortal = process.argv.includes("--super-admin");
+
 const server = await createServer({
   configFile: false,
   plugins: [react()],
   optimizeDeps: { noDiscovery: true, include: [] },
   server: {
     host: "0.0.0.0",
-    port: 5173,
+    port: superAdminPortal ? 5174 : 5173,
     strictPort: true,
     proxy: {
       "/api/v1": {
