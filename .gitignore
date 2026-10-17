@@ -1,0 +1,6 @@
+node_modules
+**/.env
+**/.env.*
+!**/.env.example
+hrms-portal/backend/backend-error.txt
+hrms-portal/backend/server-error.txt
